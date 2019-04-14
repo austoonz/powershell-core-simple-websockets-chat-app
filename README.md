@@ -1,6 +1,6 @@
 # PowerShell Core Port of simple-websockets-chat-app
 
-This is a PowerShell Core port of the [simple-websockets-chat-app](https://github.com/aws-samples/simple-websockets-chat-app) sample for AWS Lambda. For more information [Announcing WebSocket APIs in Amazon API Gateway](https://aws.amazon.com/blogs/compute/announcing-websocket-apis-in-amazon-api-gateway/) blog post.
+This is a PowerShell Core port of the [simple-websockets-chat-app](https://github.com/aws-samples/simple-websockets-chat-app) sample for AWS Lambda. For more information see the [Announcing WebSocket APIs in Amazon API Gateway](https://aws.amazon.com/blogs/compute/announcing-websocket-apis-in-amazon-api-gateway/) blog post.
 
 ## Deploy
 

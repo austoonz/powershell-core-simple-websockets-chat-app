@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: PowerShell Core port of simple-websockets-chat-app https://github.com/aws-samples/simple-websockets-chat-app
+
+Resources:
+  SimpleChatWebSocket:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: SimpleChatWebSocket
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: ConnectRoute
+      Target: !Join
+        - "/"
+        - - "integrations"
+          - !Ref ConnectInteg
+
+  ConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      Description: Connect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnConnectFunction.Arn}/invocations"
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref DisconnectInteg
+
+  DisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      Description: Disconnect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnDisconnectFunction.Arn}/invocations"
+
+  SendRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      RouteKey: sendmessage
+      AuthorizationType: NONE
+      OperationName: SendRoute
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref SendInteg
+
+  SendInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+      Description: Send Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SendMessageFunction.Arn}/invocations"
+
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+      - ConnectRoute
+      - SendRoute
+      - DisconnectRoute
+    Properties:
+      ApiId: !Ref SimpleChatWebSocket
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: prod
+      Description: Production Stage
+      DeploymentId: !Ref Deployment
+      ApiId: !Ref SimpleChatWebSocket
+
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: True
+
+  OnConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: _packaged/WebSocket.zip
+      Handler: WebSocket::WebSocket.Bootstrap::ExecuteFunction
+      MemorySize: 1024
+      Timeout: 30
+      Runtime: dotnetcore2.1
+      Environment:
+        Variables:
+          AWS_POWERSHELL_FUNCTION_HANDLER: Invoke-OnConnect
+          CONNECTION_FIELD: connectionId
+          TABLE_NAME: !Ref ConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+
+  OnConnectLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${OnConnectFunction}"
+      RetentionInDays: 3
+
+  OnConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SimpleChatWebSocket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnConnectFunction
+      Principal: apigateway.amazonaws.com
+
+  OnDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: _packaged/WebSocket.zip
+      Handler: WebSocket::WebSocket.Bootstrap::ExecuteFunction
+      MemorySize: 1024
+      Timeout: 30
+      Runtime: dotnetcore2.1
+      Environment:
+        Variables:
+          AWS_POWERSHELL_FUNCTION_HANDLER: Invoke-OnDisconnect
+          TABLE_NAME: !Ref ConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+
+  OnDisconnectLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${OnDisconnectFunction}"
+      RetentionInDays: 3
+
+  OnDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SimpleChatWebSocket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnDisconnectFunction
+      Principal: apigateway.amazonaws.com
+
+  SendMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: _packaged/WebSocket.zip
+      Handler: WebSocket::WebSocket.Bootstrap::ExecuteFunction
+      MemorySize: 1024
+      Timeout: 30
+      Runtime: dotnetcore2.1
+      Environment:
+        Variables:
+          AWS_POWERSHELL_FUNCTION_HANDLER: Invoke-SendMessage
+          CONNECTION_FIELD: connectionId
+          TABLE_NAME: !Ref ConnectionsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource:
+                - "arn:aws:execute-api:*:*:*/@connections/*"
+
+  SendMessageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SendMessageFunction}"
+      RetentionInDays: 3
+
+  SendMessagePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - SimpleChatWebSocket
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SendMessageFunction
+      Principal: apigateway.amazonaws.com
+
+Outputs:
+  ApiGatewayManagementEndpoint:
+    Description: The Endpoint for sending data to clients (PowerShell -EndpointUrl parameter)
+    Value: !Join
+      - ""
+      - - "https://"
+        - !Ref SimpleChatWebSocket
+        - ".execute-api."
+        - !Ref "AWS::Region"
+        - ".amazonaws.com/"
+        - !Ref "Stage"
+
+  WebSocketURI:
+    Description: The WSS Protocol URI to connect to
+    Value: !Join
+      - ""
+      - - "wss://"
+        - !Ref SimpleChatWebSocket
+        - ".execute-api."
+        - !Ref "AWS::Region"
+        - ".amazonaws.com/"
+        - !Ref "Stage"
+
+  ConnectionsTableArn:
+    Description: Connections table ARN
+    Value: !GetAtt ConnectionsTable.Arn
+
+  OnConnectFunctionArn:
+    Description: OnConnect function ARN
+    Value: !GetAtt OnConnectFunction.Arn
+
+  OnDisconnectFunctionArn:
+    Description: OnDisconnect function ARN
+    Value: !GetAtt OnDisconnectFunction.Arn
+
+  SendMessageFunctionArn:
+    Description: SendMessage function ARN
+    Value: !GetAtt SendMessageFunction.Arn
